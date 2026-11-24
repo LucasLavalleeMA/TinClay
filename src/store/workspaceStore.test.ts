@@ -50,6 +50,26 @@ describe('workspace layout updates', () => {
     expect(state.cellFormats?.['8,8'].alignment).toBe('right')
   })
 
+  it('applies a banded table style to the selection in one undoable step', () => {
+    const { formatCells, formatTable } = useWorkspaceStore.getState()
+    formatCells([{ x: 2, y: 2, width: 1, height: 1 }], { italic: true })
+    useWorkspaceStore.temporal.getState().clear()
+    formatTable([{ x: 1, y: 1, width: 3, height: 3 }], 'teal')
+    let state = useWorkspaceStore.getState()
+    expect(state.cellFormats?.['1,1']).toMatchObject({ fillColor: '#3e696a', textColor: '#ffffff', bold: true })
+    expect(state.cellFormats?.['2,2']).toMatchObject({ fillColor: '#e2f0ef', italic: true, bold: false, borders: { top: true, bottom: true, left: true, right: true } })
+    expect(state.cellFormats?.['2,3']?.fillColor).toBe('#ffffff')
+    expect(state.blocks.KE.formula).toBe('0.5 .* m .* v.^2')
+    expect(useWorkspaceStore.temporal.getState().pastStates).toHaveLength(1)
+    useWorkspaceStore.temporal.getState().undo()
+    state = useWorkspaceStore.getState()
+    expect(state.cellFormats?.['1,1']).toBeUndefined()
+    expect(state.cellFormats?.['2,2']).toEqual({ italic: true })
+    useWorkspaceStore.temporal.getState().redo()
+    expect(useWorkspaceStore.getState().cellFormats?.['1,1']?.fillColor).toBe('#3e696a')
+    expect(() => formatTable([{ x: 0, y: 0, width: 501, height: 500 }], 'rose')).toThrow(/250,000/)
+  })
+
   it('moves a lower block down when an expanding vector reaches it', () => {
     const { editValue } = useWorkspaceStore.getState()
     editValue('v', 5, 0, 60)

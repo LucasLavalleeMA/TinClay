@@ -1,0 +1,19 @@
+{
+  "id": "kinetic-energy",
+  "title": "Kinetic Energy",
+  "description": "Explore kinetic energy with mass, velocity, and a linked chart.",
+  "category": "Physics & Engineering",
+  "thumbnail": "energy",
+  "payload": {
+    "blocks": {
+      "Trials": { "id": "trials", "displayName": "Trials", "symbol": "Trials", "mode": "root", "formula": "", "anchor": { "row": 1, "col": 1 }, "labelPlacement": "above", "shape": { "type": "vector", "length": 5, "orientation": "col" }, "data": [[1], [2], [3], [4], [5]], "format": { "style": "general", "decimals": 2, "alignDecimal": false } },
+      "v": { "id": "velocity", "displayName": "Velocity", "symbol": "v", "mode": "root", "formula": "", "anchor": { "row": 1, "col": 2 }, "labelPlacement": "above", "shape": { "type": "vector", "length": 5, "orientation": "col" }, "data": [[10], [20], [30], [40], [50]], "format": { "style": "general", "decimals": 2, "alignDecimal": false, "unit": "m/s" } },
+      "m": { "id": "mass", "displayName": "Mass", "symbol": "m", "mode": "root", "formula": "", "anchor": { "row": 8, "col": 1 }, "labelPlacement": "left", "shape": { "type": "scalar" }, "data": [[3]], "format": { "style": "general", "decimals": 2, "alignDecimal": false, "unit": "kg" } },
+      "KE": { "id": "energy", "displayName": "Kinetic Energy", "symbol": "KE", "mode": "derived", "formula": "0.5 .* m .* v.^2", "anchor": { "row": 1, "col": 3 }, "labelPlacement": "above", "shape": { "type": "vector", "length": 5, "orientation": "col" }, "data": [[150], [600], [1350], [2400], [3750]], "format": { "style": "number", "decimals": 2, "alignDecimal": true, "unit": "J" } }
+    },
+    "activeFormulaSymbol": "KE",
+    "cellFormats": {},
+    "columnWidths": {},
+    "plots": [{ "id": "energy-chart", "title": "Kinetic Energy", "xSymbol": "v", "ySymbol": "KE", "anchor": { "row": 1, "col": 5 }, "span": { "rows": 10, "cols": 4 } }]
+  }
+}

@@ -7,7 +7,7 @@ import { isValidSymbol, renameFormulaSymbol } from '../engine/evaluator'
 import { inferShape } from '../engine/shapes'
 import { assertVacant, blockCells, spatialIndex, type CellAddress } from '../engine/spatial'
 import { isEmptyValue } from '../engine/missingValues'
-import { formatSelection, moveCellFormats } from '../engine/formatting'
+import { formatSelection, formatTableSelection, moveCellFormats, validateFormatRanges, type TableStyle } from '../engine/formatting'
 import { DEFAULT_COLUMN_WIDTH } from '../engine/geometry'
 import { createDefaultWorkspace } from '../engine/workspace'
 
@@ -23,6 +23,7 @@ interface WorkspaceState extends Workspace {
   moveBlock: (symbol: string, anchor: VariableBlock['anchor']) => void
   moveBlocks: (symbols: string[], rowDelta: number, colDelta: number) => void
   formatCells: (ranges: GridRange[], patch: Partial<CellFormat>, border?: 'all' | 'outer' | 'none', clear?: boolean) => void
+  formatTable: (ranges: GridRange[], style: TableStyle) => void
   setColumnWidth: (col: number, width: number) => void
   renameBlock: (symbol: string, name: string, newSymbol: string, unit: string) => void
   addPlot: (plot: PlotBlock) => void
@@ -292,12 +293,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set((state) => { moveSelectedBlocks(state, symbols, rowDelta, colDelta) }),
       formatCells: (ranges, patch, border, clear) =>
         set((state) => {
-          if (ranges.some((range) => !Number.isSafeInteger(range.x) || !Number.isSafeInteger(range.y) ||
-              !Number.isSafeInteger(range.width) || !Number.isSafeInteger(range.height) ||
-              range.x < 0 || range.y < 0 || range.width < 1 || range.height < 1) ||
-              ranges.reduce((sum, range) => sum + range.width * range.height, 0) > 250000) {
-            throw new Error('Select at most 250,000 cells to format at once.')
-          }
+          validateFormatRanges(ranges)
           if (!ranges.length) return
           if (!state.cellFormats) state.cellFormats = {}
           formatSelection(state.cellFormats, ranges, patch, border, clear)
@@ -323,6 +319,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               }
             }
           }
+        }),
+      formatTable: (ranges, style) =>
+        set((state) => {
+          validateFormatRanges(ranges)
+          if (!ranges.length) return
+          if (!state.cellFormats) state.cellFormats = {}
+          formatTableSelection(state.cellFormats, ranges, style)
         }),
       setColumnWidth: (col, width) =>
         set((state) => {

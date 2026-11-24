@@ -6,6 +6,7 @@
   overflow: hidden;
   background: var(--surface);
 }
+.app-shell[hidden] { display: none; }
 
 .ribbon {
   color-scheme: dark;
@@ -61,9 +62,15 @@
 .ribbon button:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line); }
 .ribbon button:active:not(:disabled), .ribbon button[aria-pressed='true'] { background: var(--accent-soft); }
 .ribbon :disabled { opacity: .5; }
-.align-control, .unit-control, .color-control { display: flex; align-items: center; gap: 4px; padding: 0 5px; color: var(--text); font-size: 12px; }
+.align-control, .variable-control, .color-control { display: flex; align-items: center; gap: 4px; padding: 0 5px; color: var(--text); font-size: 12px; }
 .align-control input { accent-color: var(--accent); }
-.unit-control input { width: 55px; }
+.variable-control input { width: 75px; }
+.table-style-gallery { gap: 2px; }
+.ribbon button.table-style-button { height: 56px; min-width: 46px; flex-direction: column; gap: 2px; font-size: 10px; }
+.table-style-preview { display: flex; flex-direction: column; width: 36px; height: 27px; overflow: hidden; border: 1px solid #aeb8b8; border-radius: 2px; }
+.table-style-preview i { flex: 1; background: #fff; }
+.table-style-preview i:first-child { background: var(--table-header); }
+.table-style-preview i:nth-child(2) { background: var(--table-band); }
 .decimal-icon { display: inline-flex; align-items: center; color: var(--text); font-size: 11px; }
 .ribbon .decimal-icon svg { width: 12px; height: 12px; }
 .color-control { position: relative; justify-content: center; height: 24px; min-width: 27px; border-radius: 4px; cursor: pointer; }
@@ -90,6 +97,7 @@
 .formula-input { min-width: 0; flex: 1; padding: 0 8px; border: 1px solid var(--line) !important; border-radius: 3px !important; font-family: Consolas, monospace; color: var(--text); background: var(--surface); }
 .formula-input::placeholder { color: #a8a8a8; opacity: 1; }
 .formula-input.formula-preview { color: #a8a8a8; }
+.document-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 7px; color: #bcbcbc; font-size: 11px; }
 .formula-error { display: flex; align-items: center; gap: 4px; color: var(--error); font-size: 11px; padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 35%; }
 .formula-error svg, .status-message svg { width: 16px; height: 16px; flex: 0 0 auto; }
 .formula-suggestion-anchor { position: absolute; top: 100%; left: 224px; z-index: 20; }

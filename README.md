@@ -17,9 +17,22 @@ show a warning.
 - Spreadsheet-style editable grid, formula bar, number formats, units, and undo/redo.
 - Variable-wide alignment, per-cell typography, colors and borders, plus light, dark and system themes.
 - Multi-variable dragging and adjustable column widths.
+- Table-style presets for selected ranges, with banded rows and a header.
 - Numeric CSV import/export and tabular numeric clipboard paste.
-- Default kinetic-energy example with a linked velocity/energy plot.
+- Home screen with blank worksheets, a bundled kinetic-energy template, and recent/pinned documents.
 - `.clay` workspace save/load in a browser or Tauri desktop window.
+
+TinClay opens to Home. Choose Blank Worksheet or the Kinetic Energy template,
+or use Open to browse for a `.clay` file. Templates create independent unsaved
+copies. Use the ribbon's Home button to return to the launcher and Back to
+Document to resume your worksheet. TinClay prompts to save changes before
+replacing a modified or unsaved template document. Recent files and pins are
+stored locally (up to 30); missing files can be located or removed. The Windows
+installer associates `.clay` files with TinClay, and a `.clay` path passed on
+the command line opens directly. In browsers with the File System Access API,
+recent files use locally stored handles and may require renewed permission.
+Other browsers use file uploads/downloads and cannot reopen local files from
+history or reveal their folders.
 
 Select a grid cell to use the formula bar. Enter a name, `symbol = value` or
 `symbol = expression` in an empty cell to create a variable. A name alone
@@ -82,6 +95,14 @@ older files without plots open without any charts.
 Use Undo/Redo in the ribbon, or Ctrl+Z and Ctrl+Y (Cmd+Z and Cmd+Shift+Z on
 macOS) while the grid is focused, to reverse or restore workspace changes.
 Text inputs retain their normal text undo. A paste is one undo step.
+Use the Table styles ribbon presets to format the selected range(s) with a
+header, alternating rows, and cell borders. This changes formatting only and
+is one undoable action; newly added cells are not styled automatically.
+The Variable ribbon group edits the selected variable's symbol and unit.
+Press Enter or leave the symbol field to apply a rename, or Escape to cancel.
+Use Ctrl+S to save, Ctrl+Shift+S to save a copy, and Ctrl+O to open a workspace
+(Cmd on macOS). Save As prompts for a new path; cancelling leaves the active
+document unchanged.
 
 ## Spreadsheet functions
 

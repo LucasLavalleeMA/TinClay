@@ -1,11 +1,11 @@
-import { lazy, Suspense, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Settings2 } from 'lucide-react'
 import DataEditor, { CompactSelection, GridCellKind, type DataEditorRef, type GridCell, type GridColumn, type GridSelection, type Item } from '@glideapps/glide-data-grid'
 import '@glideapps/glide-data-grid/dist/index.css'
 import type { CellFormat, GridRange, PlotBlock, VariableBlock } from '../types/workspace'
 import { selectionRanges, selectedBlockCells, spatialIndex, visibleCellEdges, type CellAddress } from '../engine/spatial'
 import { isEmptyValue } from '../engine/missingValues'
-import { columnAt, columnOffsets, DEFAULT_COLUMN_WIDTH, nearestColumnEdge } from '../engine/geometry'
+import { columnAt, columnOffsets, DEFAULT_COLUMN_WIDTH, nearestColumnEdge, viewportOrigin } from '../engine/geometry'
 import { useFormulaSuggestions } from './FormulaSuggestions'
 import { PlotSettingsPanel } from './PlotSettingsPanel'
 import { isMatrixPlot, makePlotFigure, plotSettings } from '../engine/plots'
@@ -51,6 +51,7 @@ interface Props {
   onPickVariable: (symbol: string) => boolean
   onSelectionChange: (selection: GridSelection, columns: number, rows: number) => void
   onEmptyDraft: (draft: { item: Item; value: string } | undefined) => void
+  commitEntryRef: React.MutableRefObject<(() => boolean) | undefined>
   onEmptyCommit: (item: Item, value: string) => void
   onValueEdit: (symbol: string, row: number, col: number, value: number) => void
   onResizeBlock: (symbol: string, rows: number, cols: number) => void
@@ -76,11 +77,11 @@ function columnName(index: number): string {
 }
 
 export function GridCanvas(props: Props) {
-  const { initialCell, blocks, plots, cellFormats, columnWidths, dark, selectedSymbol, onSelect, onPickVariable, onSelectionChange, onEmptyDraft, onEmptyCommit, onValueEdit, onResizeBlock, onClearSelection, onMoveBlocks, onColumnWidth, onRenameBlock, onPlotChange, onPlotRemove, onPasteValues, onError } = props
+  const { initialCell, blocks, plots, cellFormats, columnWidths, dark, selectedSymbol, onSelect, onPickVariable, onSelectionChange, onEmptyDraft, commitEntryRef, onEmptyCommit, onValueEdit, onResizeBlock, onClearSelection, onMoveBlocks, onColumnWidth, onRenameBlock, onPlotChange, onPlotRemove, onPasteValues, onError } = props
   const gridRef = useRef<DataEditorRef>(null)
   const shellRef = useRef<HTMLDivElement>(null)
-  const visibleRef = useRef({ x: 0, y: 0 })
-  const dragRef = useRef<{ symbol: string; symbols: string[]; start: Item; startX: number; startY: number; target: Item; moved: boolean }>()
+  const viewportRef = useRef({ x: 48, y: 36, scrollLeft: 0, scrollTop: 0 })
+  const dragRef = useRef<{ symbol: string; symbols: string[]; start: Item; startX: number; startY: number; pointerX: number; pointerY: number; target: Item; moved: boolean }>()
   const suppressSelection = useRef(false)
   const resizeRef = useRef<{ symbol: string; x: number; y: number; originX: number; originY: number; rows: number; cols: number }>()
   const columnResizeRef = useRef<{ primary: number; moved: boolean }>()
@@ -115,18 +116,6 @@ export function GridCanvas(props: Props) {
   const edgeAt = (col: number) => offsets[col] ?? offsets[offsets.length - 1] + (col - offsets.length + 1) * COLUMN_WIDTH
   const spanWidth = (col: number, span: number) => edgeAt(col + span) - edgeAt(col)
 
-  const refreshBounds = useCallback(() => {
-    const shell = shellRef.current
-    if (!shell) return
-    const scroll = shell.querySelector('.dvn-scroller')
-    const rect = shell.getBoundingClientRect()
-    const col = Math.max(0, visibleRef.current.x)
-    const row = Math.max(0, visibleRef.current.y)
-    const bounds = gridRef.current?.getBounds(col, row)
-    const x = bounds && Number.isFinite(bounds.x) ? bounds.x - rect.left - offsets[col] : 48 - (scroll?.scrollLeft ?? 0)
-    const y = bounds && Number.isFinite(bounds.y) ? bounds.y - rect.top - row * ROW_HEIGHT : 36 - (scroll?.scrollTop ?? 0)
-    setOrigin((current) => current.x === x && current.y === y ? current : { x, y })
-  }, [offsets])
   useLayoutEffect(() => {
     if (!shellRef.current) return
     const initial = shellRef.current.getBoundingClientRect()
@@ -134,12 +123,22 @@ export function GridCanvas(props: Props) {
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect
       if (rect && rect.width > 0 && rect.height > 0) setSize({ width: rect.width, height: rect.height })
-      refreshBounds()
     })
     observer.observe(shellRef.current)
-    refreshBounds()
     return () => observer.disconnect()
-  }, [refreshBounds])
+  }, [])
+
+  // With smoothScrollX/Y the canvas origin is exactly (row-marker width - scrollLeft, header height - scrollTop).
+  // Reading it straight from the scroller avoids pairing Glide's (range, tx, ty) with a DOM scroll position
+  // sampled at a different moment, which drifted during fast scrolling.
+  const liveOrigin = () => {
+    const scroll = shellRef.current?.querySelector<HTMLElement>('.dvn-scroller')
+    if (!scroll) return { x: viewportRef.current.x, y: viewportRef.current.y }
+    return { x: 48 - scroll.scrollLeft, y: 36 - scroll.scrollTop }
+  }
+  const updateOrigin = (next: { x: number; y: number }) => {
+    setOrigin((current) => current.x === next.x && current.y === next.y ? current : next)
+  }
 
   const boundsAt = (col: number, row: number) => {
     return { x: origin.x + edgeAt(col), y: origin.y + row * ROW_HEIGHT }
@@ -147,8 +146,9 @@ export function GridCanvas(props: Props) {
   const itemAt = (clientX: number, clientY: number): Item | undefined => {
     const shell = shellRef.current?.getBoundingClientRect()
     if (!shell || clientX < shell.left + 48 || clientY < shell.top + 36 || clientX >= shell.right || clientY >= shell.bottom) return undefined
-    const col = columnAt(offsets, clientX - shell.left - origin.x)
-    const row = Math.floor((clientY - shell.top - origin.y) / ROW_HEIGHT)
+    const currentOrigin = liveOrigin()
+    const col = columnAt(offsets, clientX - shell.left - currentOrigin.x)
+    const row = Math.floor((clientY - shell.top - currentOrigin.y) / ROW_HEIGHT)
     return col >= 0 && col < columnCount && row >= 0 && row < rowCount ? [col, row] : undefined
   }
 
@@ -223,7 +223,7 @@ export function GridCanvas(props: Props) {
     } catch (error) { onError(error) }
   }
   const finishEmptyEntry = (cancel = false, focusGrid = false) => {
-    if (!emptyEntry || finishingEmpty.current) return
+    if (!emptyEntry || finishingEmpty.current) return true
     finishingEmpty.current = true
     try {
       if (!cancel && emptyEntry.value.trim()) {
@@ -237,11 +237,12 @@ export function GridCanvas(props: Props) {
       onEmptyDraft(undefined)
       if (cancel) onSelect(emptyEntry.item)
       if (focusGrid) requestAnimationFrame(() => gridRef.current?.focus())
+      return true
     } catch (error) {
       finishingEmpty.current = false
       onError(error)
       const input = emptyInputRef.current
-      if (document.activeElement === input) return
+      if (document.activeElement === input) return false
       requestAnimationFrame(() => {
         if (finishingEmpty.current || !input || emptyInputRef.current !== input) return
         const item = emptyEntry.item
@@ -250,17 +251,37 @@ export function GridCanvas(props: Props) {
         onError(error)
         input.focus()
       })
+      return false
     }
   }
+  useLayoutEffect(() => {
+    commitEntryRef.current = () => {
+      if (editing) {
+        try {
+          const block = blocks[editing.symbol]
+          if (!block) throw new Error('Variable not found.')
+          if (editing.name !== block.displayName || editing.newSymbol.trim() !== block.symbol || editing.unit !== (block.format.unit ?? '')) {
+            onRenameBlock(editing.symbol, editing.name, editing.newSymbol.trim(), editing.unit)
+          }
+          setEditing(undefined)
+        } catch (error) { onError(error); return false }
+      }
+      return finishEmptyEntry()
+    }
+    return () => { commitEntryRef.current = undefined }
+  })
   return (
     <div
       className={`grid-shell${dragging ? ' dragging-variable' : ''}`}
       ref={shellRef}
       onScrollCapture={(event) => {
         if (!(event.target instanceof HTMLElement) || !event.target.classList.contains('dvn-scroller')) return
-        const x = 48 - event.target.scrollLeft
-        const y = 36 - event.target.scrollTop
-        setOrigin((current) => current.x === x && current.y === y ? current : { x, y })
+        updateOrigin(liveOrigin())
+        const drag = dragRef.current
+        if (drag?.moved) {
+          const item = itemAt(drag.pointerX, drag.pointerY)
+          if (item) { drag.target = item; setDragTarget(item) }
+        }
       }}
       onPointerDownCapture={(event) => {
         if (!(event.target instanceof Element) || !event.target.closest('.dvn-scroller') || event.button !== 0 || event.ctrlKey || event.metaKey) return
@@ -292,8 +313,13 @@ export function GridCanvas(props: Props) {
           const selectedCells = selectedBlockCells(addresses, selection)
           const inSelection = selectedCells.some((cell) => cell.symbol === address.symbol)
           const symbols = inSelection ? [...new Set(selectedCells.map((cell) => cell.symbol))] : [address.symbol]
-          dragRef.current = { symbol: address.symbol, symbols, start: item, startX: event.clientX, startY: event.clientY, target: item, moved: false }
+          dragRef.current = { symbol: address.symbol, symbols, start: item, startX: event.clientX, startY: event.clientY, pointerX: event.clientX, pointerY: event.clientY, target: item, moved: false }
+          suppressSelection.current = true
+          event.preventDefault()
         }
+      }}
+      onMouseDownCapture={(event) => {
+        if (dragRef.current && !event.ctrlKey && !event.metaKey) event.stopPropagation()
       }}
       onPointerMoveCapture={(event) => {
         const drag = dragRef.current
@@ -305,9 +331,10 @@ export function GridCanvas(props: Props) {
           setDragging(false)
           return
         }
+        drag.pointerX = event.clientX
+        drag.pointerY = event.clientY
         if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 5 && !drag.moved) {
           drag.moved = true
-          suppressSelection.current = true
           setDragging(true)
         }
         if (!drag.moved) return
@@ -321,6 +348,7 @@ export function GridCanvas(props: Props) {
         setDragging(false)
         if (drag?.moved && !event.ctrlKey && !event.metaKey) {
           try {
+            drag.target = itemAt(event.clientX, event.clientY) ?? drag.target
             const rowDelta = drag.target[1] - drag.start[1]
             const colDelta = drag.target[0] - drag.start[0]
             onMoveBlocks(drag.symbols, rowDelta, colDelta)
@@ -332,7 +360,24 @@ export function GridCanvas(props: Props) {
             onSelect(item)
           } catch (error) { onError(error) }
           setTimeout(() => { suppressSelection.current = false }, 0)
-        } else suppressSelection.current = false
+        } else {
+          suppressSelection.current = false
+          if (drag && !event.ctrlKey && !event.metaKey) {
+            const item = drag.start
+            updateSelection({ current: { cell: item, range: { x: item[0], y: item[1], width: 1, height: 1 }, rangeStack: [] }, rows: CompactSelection.empty(), columns: CompactSelection.empty() })
+            onSelect(item)
+            gridRef.current?.focus()
+          }
+        }
+      }}
+      onDoubleClickCapture={(event) => {
+        if (event.ctrlKey || event.metaKey || !(event.target instanceof Element) || !event.target.closest('.dvn-scroller')) return
+        const item = itemAt(event.clientX, event.clientY)
+        const address = item && addresses.get(`${item[0]},${item[1]}`)
+        if (address?.role !== 'label') return
+        const block = blocks[address.symbol]
+        setEditing({ symbol: block.symbol, name: block.displayName, newSymbol: block.symbol, unit: block.format.unit ?? '' })
+        event.stopPropagation()
       }}
       onPointerCancelCapture={() => { dragRef.current = undefined; suppressSelection.current = false; setDragTarget(undefined); setDragging(false) }}
       onPointerLeave={() => { dragRef.current = undefined; suppressSelection.current = false; setDragTarget(undefined); setDragging(false) }}
@@ -367,11 +412,19 @@ export function GridCanvas(props: Props) {
             delete next[col]
             return next
           })
-          requestAnimationFrame(refreshBounds)
         }}
-        onVisibleRegionChanged={(range) => {
-          visibleRef.current = { x: range.x, y: range.y }
-          requestAnimationFrame(refreshBounds)
+        onVisibleRegionChanged={(range, tx, ty) => {
+          const next = viewportOrigin(offsets, Math.max(0, range.x), Math.max(0, range.y), tx, ty, ROW_HEIGHT)
+          const scroll = shellRef.current?.querySelector('.dvn-scroller')
+          viewportRef.current = { ...next, scrollLeft: scroll?.scrollLeft ?? 0, scrollTop: scroll?.scrollTop ?? 0 }
+          // Diagnostic: should be 0 at rest; non-zero mid-fling means Glide's region lagged the DOM scroll.
+          // console.log(next.x - (48 - (scroll?.scrollLeft ?? 0)), next.y - (36 - (scroll?.scrollTop ?? 0)))
+          updateOrigin(liveOrigin())
+          const drag = dragRef.current
+          if (drag?.moved) {
+            const item = itemAt(drag.pointerX, drag.pointerY)
+            if (item) { drag.target = item; setDragTarget(item) }
+          }
         }}
         gridSelection={dragging ? { rows: CompactSelection.empty(), columns: CompactSelection.empty() } : selection}
         onGridSelectionChange={(next) => {
@@ -608,21 +661,22 @@ export function GridCanvas(props: Props) {
       {plots.map((plot) => {
         const position = boundsAt(plot.anchor.col, plot.anchor.row)
         if (!position) return null
-        return <FloatingPlot key={plot.id} plot={plot} blocks={blocks} position={position} offsets={offsets} dark={dark} columnCount={columnCount} rowCount={rowCount} onChange={onPlotChange} onRemove={onPlotRemove} onSettings={() => setSettingsPlotId(plot.id)} onError={onError} />
+        return <FloatingPlot key={plot.id} plot={plot} blocks={blocks} position={position} getOrigin={liveOrigin} offsets={offsets} dark={dark} columnCount={columnCount} rowCount={rowCount} onChange={onPlotChange} onRemove={onPlotRemove} onSettings={() => setSettingsPlotId(plot.id)} onError={onError} />
       })}
       {settingsPlot && <PlotSettingsPanel key={settingsPlotId} plot={settingsPlot} blocks={blocks} side={settingsSide} onChange={onPlotChange} onClose={() => setSettingsPlotId(undefined)} />}
     </div>
   )
 }
 
-function FloatingPlot({ plot, blocks, position, offsets, dark, columnCount, rowCount, onChange, onRemove, onSettings, onError }: {
+function FloatingPlot({ plot, blocks, position, getOrigin, offsets, dark, columnCount, rowCount, onChange, onRemove, onSettings, onError }: {
   plot: PlotBlock; blocks: Record<string, VariableBlock>; position: { x: number; y: number }
+  getOrigin: () => { x: number; y: number }
   offsets: number[]; dark: boolean
   columnCount: number; rowCount: number
   onChange: Props['onPlotChange']; onRemove: Props['onPlotRemove']
   onSettings: () => void; onError: Props['onError']
 }) {
-  const drag = useRef<{ x: number; y: number; anchor: PlotBlock['anchor']; span: PlotBlock['span']; resize: boolean }>()
+  const drag = useRef<{ x: number; y: number; origin: { x: number; y: number }; anchor: PlotBlock['anchor']; span: PlotBlock['span']; resize: boolean }>()
   const [preview, setPreview] = useState<{ x: number; y: number; w: number; h: number }>()
   const width = offsets[plot.anchor.col + plot.span.cols] - offsets[plot.anchor.col]
   const height = plot.span.rows * ROW_HEIGHT
@@ -634,7 +688,7 @@ function FloatingPlot({ plot, blocks, position, offsets, dark, columnCount, rowC
   const start = (event: React.PointerEvent, resize: boolean) => {
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
-    drag.current = { x: event.clientX, y: event.clientY, anchor: plot.anchor, span: plot.span, resize }
+    drag.current = { x: event.clientX, y: event.clientY, origin: getOrigin(), anchor: plot.anchor, span: plot.span, resize }
   }
   const move = (event: React.PointerEvent) => {
     if (!drag.current) return
@@ -647,8 +701,9 @@ function FloatingPlot({ plot, blocks, position, offsets, dark, columnCount, rowC
   const end = (event: React.PointerEvent) => {
     const current = drag.current
     if (!current) return
-    const dx = event.clientX - current.x
-    const dy = event.clientY - current.y
+    const origin = getOrigin()
+    const dx = event.clientX - current.x + current.origin.x - origin.x
+    const dy = event.clientY - current.y + current.origin.y - origin.y
     if (current.resize) {
       onChange(plot.id, { span: { cols: Math.max(2, Math.min(columnCount - plot.anchor.col, nearestColumnEdge(offsets, offsets[current.anchor.col + current.span.cols] + dx) - current.anchor.col)), rows: Math.max(4, Math.min(rowCount - plot.anchor.row, current.span.rows + Math.round(dy / ROW_HEIGHT))) } })
     } else {
@@ -657,8 +712,11 @@ function FloatingPlot({ plot, blocks, position, offsets, dark, columnCount, rowC
     drag.current = undefined
     setPreview(undefined)
   }
+  const currentOrigin = getOrigin()
+  const scrollX = drag.current ? drag.current.origin.x - currentOrigin.x : 0
+  const scrollY = drag.current ? drag.current.origin.y - currentOrigin.y : 0
   return (
-    <div className="floating-plot" style={{ left: position.x + (preview?.x ?? 0), top: position.y + (preview?.y ?? 0), width: Math.max(80, width + (preview?.w ?? 0)), height: Math.max(ROW_HEIGHT * 4, height + (preview?.h ?? 0)) }}>
+    <div className="floating-plot" style={{ left: position.x + (preview?.x ?? 0) + (drag.current && !drag.current.resize ? scrollX : 0), top: position.y + (preview?.y ?? 0) + (drag.current && !drag.current.resize ? scrollY : 0), width: Math.max(80, width + (preview?.w ?? 0) + (drag.current?.resize ? scrollX : 0)), height: Math.max(ROW_HEIGHT * 4, height + (preview?.h ?? 0) + (drag.current?.resize ? scrollY : 0)) }}>
       <div className="plot-header">
         <div className="plot-drag" title="Drag to move chart" onPointerDown={(event) => start(event, false)} onPointerMove={move} onPointerUp={end} onPointerCancel={() => { drag.current = undefined; setPreview(undefined) }}>{plot.title}</div>
         {!isMatrixPlot(chartType) && chartType !== 'histogram' && chartType !== 'box' && <label>X <select aria-label={`${plot.title} X variable`} value={plot.xSymbol} onChange={(event) => onChange(plot.id, { xSymbol: event.target.value })}><option value="">None</option>{numericSymbols.map((symbol) => <option key={symbol}>{symbol}</option>)}</select></label>}

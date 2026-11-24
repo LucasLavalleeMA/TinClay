@@ -7,7 +7,7 @@ import { parseWorkspace } from './storageAdapter'
 import { evaluateFormula, getFormulaSymbols, renameFormulaSymbol } from './evaluator'
 import { useWorkspaceStore } from '../store/workspaceStore'
 import { blockEdges, selectedBlockCells, spatialIndex, visibleCellEdges } from './spatial'
-import { columnAt, columnOffsets, nearestColumnEdge } from './geometry'
+import { columnAt, columnOffsets, nearestColumnEdge, viewportOrigin } from './geometry'
 import { getFormulaSuggestions } from '../components/FormulaSuggestions'
 import { makePlotFigure } from './plots'
 
@@ -144,6 +144,13 @@ describe('workspace calculations', () => {
     expect(columnAt(offsets, 300)).toBe(2)
     expect(nearestColumnEdge(offsets, 190)).toBe(1)
     expect(nearestColumnEdge(offsets, 210)).toBe(2)
+  })
+
+  it('locates the grid origin from the visible region and fractional translations', () => {
+    const offsets = columnOffsets([100, 200, 80])
+    expect(viewportOrigin(offsets, 1, 4, -23.5, -12.25, 34)).toEqual({ x: -75.5, y: -112.25 })
+    expect(viewportOrigin(columnOffsets([150, 200, 80]), 1, 4, -23.5, -12.25, 34)).toEqual({ x: -125.5, y: -112.25 })
+    expect(viewportOrigin(offsets, 0, 0, 0, 0, 34)).toEqual({ x: 48, y: 36 })
   })
 
   it('suggests supported function names at the caret without suggesting short symbols', () => {

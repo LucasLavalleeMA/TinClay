@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { CompactSelection, type GridSelection, type Item } from '@glideapps/glide-data-grid'
-import { AlignCenter, AlignLeft, AlignRight, ArrowLeft, ArrowRight, Bold, ChartNoAxesCombined, CircleAlert, Eraser, FileDown, FileUp, FolderOpen, Italic, PaintBucket, Plus, Redo2, Save, Trash2, Underline, Undo2 } from 'lucide-react'
+import { AlignCenter, AlignLeft, AlignRight, ArrowLeft, ArrowRight, Bold, ChartNoAxesCombined, CircleAlert, Eraser, FileDown, FileUp, FolderOpen, Home, Italic, PaintBucket, Plus, Redo2, Save, SaveAll, Trash2, Underline, Undo2 } from 'lucide-react'
 import { GridCanvas } from './components/GridCanvas'
+import { HomeView } from './components/HomeView'
 import { useFormulaSuggestions } from './components/FormulaSuggestions'
 import { exportCsv, importCsv, parseClipboard, toSymbol } from './engine/ioAdapter'
 import { isValidSymbol } from './engine/evaluator'
 import { selectionRanges, spatialIndex, type CellAddress } from './engine/spatial'
-import { loadWorkspace, saveWorkspace } from './engine/storageAdapter'
+import { forgetRecentWorkspace, isTauri, loadWorkspace, openRecentWorkspace, recentModified, revealWorkspace, saveWorkspace, startupWorkspace, type DocumentFile } from './engine/storageAdapter'
+import { readRecentFiles, rememberFile, writeRecentFiles, type RecentFile } from './engine/recentFiles'
+import { instantiateTemplate, newBlankWorkspace, type Template } from './engine/templates'
 import { createBlock } from './engine/workspace'
 import { isEmptyValue } from './engine/missingValues'
-import type { CellFormat } from './types/workspace'
+import { TABLE_STYLES, type TableStyle } from './engine/formatting'
+import type { CellFormat, Workspace } from './types/workspace'
 import { useWorkspaceStore } from './store/workspaceStore'
 import './App.css'
 
@@ -27,8 +31,13 @@ function nextVariableSymbol(blocks: Record<string, unknown>): string {
   return `Variable${suffix}`
 }
 
+function currentWorkspace(): Workspace {
+  const { blocks, plots, activeFormulaSymbol, cellFormats, columnWidths } = useWorkspaceStore.getState()
+  return { blocks, plots, activeFormulaSymbol, cellFormats, columnWidths }
+}
+
 function App() {
-  const { blocks, plots, cellFormats, columnWidths, activeFormulaSymbol, setFormula, editValue, editValues, resizeBlock, clearSelection, updateFormat, addBlocks, moveBlocks, formatCells, setColumnWidth, renameBlock, addPlot, updatePlot, removePlot, replaceWorkspace } = useWorkspaceStore()
+  const { blocks, plots, cellFormats, columnWidths, setFormula, editValue, editValues, resizeBlock, clearSelection, updateFormat, addBlocks, moveBlocks, formatCells, formatTable, setColumnWidth, renameBlock, addPlot, updatePlot, removePlot, replaceWorkspace } = useWorkspaceStore()
   const canUndo = useStore(useWorkspaceStore.temporal, (state) => state.pastStates.length > 0)
   const canRedo = useStore(useWorkspaceStore.temporal, (state) => state.futureStates.length > 0)
   const [selectedCell, setSelectedCell] = useState<Item>([1, 1])
@@ -46,18 +55,35 @@ function App() {
   const [formulaDraft, setFormulaDraft] = useState<{ key: string; value: string }>()
   const [gridDraft, setGridDraft] = useState<{ item: Item; value: string }>()
   const [nameDraft, setNameDraft] = useState<{ key: string; value: string }>()
-  const [notice, setNotice] = useState('')
-  const [noticeIsError, setNoticeIsError] = useState(false)
+  const [symbolDraft, setSymbolDraft] = useState<{ id: string; value: string }>()
+  const [initialRecent] = useState(() => {
+    try { return { files: readRecentFiles(), error: '' } }
+    catch (error) { return { files: [] as RecentFile[], error: error instanceof Error ? error.message : 'Could not load recent files.' } }
+  })
+  const [notice, setNotice] = useState(initialRecent.error)
+  const [noticeIsError, setNoticeIsError] = useState(Boolean(initialRecent.error))
+  const [home, setHome] = useState(true)
+  const [startupPending, setStartupPending] = useState(isTauri)
+  const [hasDocument, setHasDocument] = useState(false)
+  const [documentInfo, setDocumentInfo] = useState<{ name: string; path?: string }>({ name: 'Untitled' })
+  const [savedSnapshot, setSavedSnapshot] = useState('')
+  const [unsavedTemplate, setUnsavedTemplate] = useState(false)
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>(initialRecent.files)
+  const recentRef = useRef<RecentFile[]>(initialRecent.files)
+  const [pendingAction, setPendingAction] = useState<{ run: () => Promise<void> }>()
+  const [missingFile, setMissingFile] = useState<RecentFile>()
   const [borderStyle, setBorderStyle] = useState<NonNullable<CellFormat['borderStyle']>>('solid')
   const [borderColor, setBorderColor] = useState('#806e6e')
   const csvInput = useRef<HTMLInputElement>(null)
   const formulaInput = useRef<HTMLInputElement>(null)
+  const commitEntryRef = useRef<(() => boolean)>()
   const addresses = useMemo(() => spatialIndex(blocks), [blocks])
   const address = addresses.get(`${selectedCell[0]},${selectedCell[1]}`)
   const selected = address ? blocks[address.symbol] : undefined
   const cellFormat = cellFormats?.[`${selectedCell[0]},${selectedCell[1]}`] ?? {}
   const alignment = selected?.format.alignment ?? cellFormat.alignment ?? (address?.role === 'value' && !selected?.format.alignDecimal ? 'right' : undefined)
   const dark = themeMode === 'dark' || themeMode === 'system' && systemDark
+  const dirty = hasDocument && (unsavedTemplate || JSON.stringify(currentWorkspace()) !== savedSnapshot || Boolean(formulaDraft || nameDraft || symbolDraft || gridDraft))
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
     const update = () => setSystemDark(media.matches)
@@ -68,6 +94,9 @@ function App() {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
     localStorage.setItem('tinclay-theme', themeMode)
   }, [dark, themeMode])
+  useEffect(() => {
+    document.title = hasDocument ? `${documentInfo.name}${dirty ? ' *' : ''} — TinClay` : 'TinClay — Spatial Engineering Worksheet'
+  }, [hasDocument, documentInfo.name, dirty])
   const fieldKey = `${selectedCell[0]},${selectedCell[1]},${selected?.id ?? ''}`
   const selectedName = selected ? selected.displayName === selected.symbol ? selected.symbol : `${selected.displayName} (${selected.symbol})` : coordinate(selectedCell)
   const selectedFormula = !selected ? '' : selected.mode === 'derived' ? selected.formula : address?.role === 'ghost' || isEmptyValue(selected, address?.row ?? 0, address?.col ?? 0) ? '' : String(selected.data[address?.row ?? 0]?.[address?.col ?? 0] ?? '')
@@ -89,7 +118,58 @@ function App() {
     return true
   }
 
-  const showError = (error: unknown) => { setNoticeIsError(true); setNotice(error instanceof Error ? error.message : 'Something went wrong.') }
+  const showError = (error: unknown) => { setNoticeIsError(true); setNotice(error instanceof Error ? error.message : typeof error === 'string' ? error : 'Something went wrong.') }
+  const updateRecent = (files: RecentFile[]) => {
+    const removed = recentRef.current.filter((item) => !files.some((file) => file.path === item.path) && item.path !== documentInfo.path)
+    recentRef.current = files
+    setRecentFiles(files)
+    try { writeRecentFiles(files) } catch (error) { showError(error) }
+    for (const item of removed) void forgetRecentWorkspace(item.path).catch(showError)
+  }
+  const recordFile = (file: Omit<DocumentFile, 'workspace'>) => {
+    if (file.path) updateRecent(rememberFile(recentRef.current, { path: file.path, name: file.name, modified: file.modified, accessed: Date.now() }))
+  }
+  const applyDocument = (file: DocumentFile, template = false) => {
+    replaceWorkspace(file.workspace)
+    useWorkspaceStore.temporal.getState().clear()
+    const item: Item = [0, 0]
+    setSelectedCell(item)
+    setGridSelection({ current: { cell: item, range: { x: 0, y: 0, width: 1, height: 1 }, rangeStack: [] }, rows: CompactSelection.empty(), columns: CompactSelection.empty() })
+    setFormulaDraft(undefined); setNameDraft(undefined); setSymbolDraft(undefined); setGridDraft(undefined)
+    setGridVersion((version) => version + 1)
+    setDocumentInfo({ name: file.name, path: file.path })
+    setSavedSnapshot(JSON.stringify(currentWorkspace()))
+    setUnsavedTemplate(template)
+    setHasDocument(true)
+    setHome(false)
+    setNotice('')
+    recordFile(file)
+  }
+  useEffect(() => {
+    let active = true
+    void startupWorkspace().then((file) => { if (active && file) applyDocument(file) }).catch((error: unknown) => { if (active) showError(error) }).finally(() => { if (active) setStartupPending(false) })
+    return () => { active = false }
+  // The startup path must only be consumed once per launch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    if (!home || !isTauri() || !recentRef.current.length) return
+    let active = true
+    const snapshot = recentRef.current
+    void Promise.all(snapshot.map(async (file) => ({ file, modified: await recentModified(file.path) }))).then((results) => {
+      if (!active) return
+      const updates = new Map(results.map((result) => [result.file.path, result]))
+      const files = recentRef.current.map((file) => {
+        const result = updates.get(file.path)
+        return result && result.modified !== null && result.file.accessed === file.accessed && result.file.modified === file.modified && result.modified !== file.modified
+          ? { ...file, modified: result.modified } : file
+      })
+      if (files.some((file, index) => file !== recentRef.current[index])) updateRecent(files)
+    }).catch((error: unknown) => { if (active) showError(error) })
+    return () => { active = false }
+  // Refresh when Home opens, not when document callbacks change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [home])
   const applyCellFormat = (patch: Partial<CellFormat>, border?: 'all' | 'outer' | 'none', clear = false) => {
     try { formatCells(selectionRanges(gridSelection, gridSize.columns, gridSize.rows), patch, border, clear); setNotice('') } catch (error) { showError(error) }
   }
@@ -98,6 +178,7 @@ function App() {
       setSelectedCell(item)
       setFormulaDraft(undefined)
       setNameDraft(undefined)
+      setSymbolDraft(undefined)
     }
     setFormulaDraft(undefined)
     setNotice('')
@@ -155,10 +236,11 @@ function App() {
       } else createAtCell(selectedCell, input)
       setFormulaDraft(undefined)
       setNotice('')
-    } catch (error) { showError(error) }
+      return true
+    } catch (error) { showError(error); return false }
   }
   const commitName = () => {
-    if (!selected) return
+    if (!selected) return false
     try {
       const match = name.trim().match(/^(.*?)\s*\(([A-Za-z][A-Za-z0-9_]*)\)$/)
       const newName = match ? match[1].trim() : name.trim()
@@ -166,7 +248,21 @@ function App() {
       renameBlock(selected.symbol, newName, newSymbol, selected.format.unit ?? '')
       setNameDraft(undefined)
       setNotice('')
-    } catch (error) { showError(error) }
+      return true
+    } catch (error) { showError(error); return false }
+  }
+  const commitSymbol = () => {
+    if (!selected || symbolDraft?.id !== selected.id) return true
+    try {
+      if (nameDraft?.key === fieldKey && !commitName()) return false
+      const current = Object.values(useWorkspaceStore.getState().blocks).find((block) => block.id === selected.id)
+      if (!current) throw new Error('Variable not found.')
+      const symbol = symbolDraft.value.trim()
+      if (symbol !== current.symbol) renameBlock(current.symbol, current.displayName, symbol, current.format.unit ?? '')
+      setSymbolDraft(undefined)
+      setNotice('')
+      return true
+    } catch (error) { showError(error); return false }
   }
   const importFile = async (file?: File) => {
     if (!file) return
@@ -197,20 +293,45 @@ function App() {
       setNotice('')
     } catch (error) { showError(error) }
   }
-  const handleSave = async () => {
-    try { await saveWorkspace({ blocks, plots, activeFormulaSymbol, cellFormats, columnWidths }); setNoticeIsError(false); setNotice('Workspace saved.') } catch (error) { showError(error) }
+  const handleSave = async (saveAs = false): Promise<boolean> => {
+    try {
+      if (!commitEntryRef.current) throw new Error('The worksheet is not ready to save.')
+      if (!commitEntryRef.current()) return false
+      if (formulaDraft?.key === fieldKey && !commitFormula()) return false
+      if (symbolDraft && symbolDraft.id === selected?.id) {
+        if (!commitSymbol()) return false
+      } else if (nameDraft?.key === fieldKey && !commitName()) return false
+      const workspace = currentWorkspace()
+      const file = await saveWorkspace(workspace, documentInfo.path, `${documentInfo.name.replace(/\.clay$/i, '')}.clay`, saveAs)
+      if (!file) return false
+      setDocumentInfo({ name: file.name, path: file.path })
+      setSavedSnapshot(JSON.stringify(workspace))
+      setUnsavedTemplate(false)
+      setNoticeIsError(false); setNotice('Workspace saved.')
+      recordFile(file)
+      return true
+    } catch (error) { showError(error); return false }
+  }
+  const requestReplacement = (run: () => Promise<void>) => {
+    if (dirty || document.querySelector('.header-editor')) setPendingAction({ run })
+    else void run()
   }
   const handleLoad = async () => {
     try {
-      const workspace = await loadWorkspace()
-      if (workspace) {
-        const item: Item = [0, 0]
-        replaceWorkspace(workspace)
-        selectCell(item)
-        setGridSelection({ current: { cell: item, range: { x: 0, y: 0, width: 1, height: 1 }, rangeStack: [] }, rows: CompactSelection.empty(), columns: CompactSelection.empty() })
-        setGridVersion((version) => version + 1)
-        setNoticeIsError(false); setNotice('Workspace loaded.')
-      }
+      const file = await loadWorkspace()
+      if (file) applyDocument(file)
+    } catch (error) { showError(error) }
+  }
+  const openRecent = async (recent: RecentFile) => {
+    try {
+      const file = await openRecentWorkspace(recent.path)
+      if (file) applyDocument(file)
+      else setMissingFile(recent)
+    } catch (error) { showError(error) }
+  }
+  const createDocument = async (template?: Template) => {
+    try {
+      applyDocument({ workspace: template ? instantiateTemplate(template) : newBlankWorkspace(), name: template ? `Untitled - ${template.title}` : 'Untitled', modified: Date.now() }, Boolean(template))
     } catch (error) { showError(error) }
   }
   const handleExport = () => {
@@ -236,8 +357,24 @@ function App() {
       span: { rows: 10, cols: 4 },
     })
   }
-  return (
-    <main className="app-shell" onKeyDownCapture={(event) => {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((!event.ctrlKey && !event.metaKey) || event.altKey || event.repeat) return
+      const key = event.key.toLowerCase()
+      if (key !== 's' && key !== 'o') return
+      if (key === 'o' && event.shiftKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (startupPending || pendingAction || missingFile) return
+      if (key === 'o') requestReplacement(handleLoad)
+      else if (hasDocument) void handleSave(event.shiftKey)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  })
+  return (<>
+    {startupPending ? <div className="startup-message" role="status">Opening TinClay…</div> : home && <HomeView hasDocument={hasDocument} files={recentFiles} onBack={() => setHome(false)} onBlank={() => requestReplacement(() => createDocument())} onTemplate={(template) => requestReplacement(() => createDocument(template))} onBrowse={() => requestReplacement(handleLoad)} onOpen={(file) => requestReplacement(() => openRecent(file))} onPin={(file) => updateRecent(recentRef.current.map((item) => item.path === file.path ? { ...item, pinned: !item.pinned } : item))} onRemove={(file) => updateRecent(recentRef.current.filter((item) => item.path !== file.path))} onReveal={(file) => { void revealWorkspace(file.path).catch(showError) }} />}
+    {hasDocument && <main hidden={home} className="app-shell" onKeyDownCapture={(event) => {
       if ((!event.ctrlKey && !event.metaKey) || event.altKey || !(event.target instanceof HTMLElement)) return
       if (event.target.isContentEditable || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return
       const key = event.key.toLowerCase()
@@ -253,10 +390,11 @@ function App() {
       <nav className="ribbon" aria-label="Workspace tools">
         <div className="ribbon-group" role="group" aria-label="File">
           <div className="ribbon-content">
-            <button className="ribbon-primary" aria-label="Open (.clay)" title="Open (.clay)" onClick={() => void handleLoad()}><FolderOpen aria-hidden="true" /> Open</button>
-            <button className="ribbon-primary" aria-label="Save (.clay)" title="Save (.clay)" onClick={() => void handleSave()}><Save aria-hidden="true" /> Save</button>
+            <button className="ribbon-primary" aria-label="Home" title="Home" onClick={() => setHome(true)}><Home aria-hidden="true" /> Home</button>
+            <button className="ribbon-primary" aria-label="Open (.clay)" title="Open (.clay) (Ctrl+O)" onClick={() => requestReplacement(handleLoad)}><FolderOpen aria-hidden="true" /> Open</button>
+            <button className="ribbon-primary" aria-label="Save (.clay)" title="Save (.clay) (Ctrl+S)" onClick={() => void handleSave()}><Save aria-hidden="true" /> Save</button>
             <div className="ribbon-stack">
-              <div className="ribbon-row"><button aria-label="Import CSV" title="Import CSV" onClick={() => csvInput.current?.click()}><FileUp aria-hidden="true" /></button><button aria-label="Export CSV" title="Export CSV" onClick={handleExport}><FileDown aria-hidden="true" /></button></div>
+              <div className="ribbon-row"><button aria-label="Save As (.clay)" title="Save As (Ctrl+Shift+S)" onClick={() => void handleSave(true)}><SaveAll aria-hidden="true" /></button><button aria-label="Import CSV" title="Import CSV" onClick={() => csvInput.current?.click()}><FileUp aria-hidden="true" /></button><button aria-label="Export CSV" title="Export CSV" onClick={handleExport}><FileDown aria-hidden="true" /></button></div>
               <div className="ribbon-row"><button aria-label="Undo" disabled={!canUndo} title="Undo (Ctrl+Z)" onClick={() => useWorkspaceStore.temporal.getState().undo()}><Undo2 aria-hidden="true" /></button><button aria-label="Redo" disabled={!canRedo} title="Redo (Ctrl+Y or Ctrl+Shift+Z)" onClick={() => useWorkspaceStore.temporal.getState().redo()}><Redo2 aria-hidden="true" /></button></div>
             </div>
           </div>
@@ -268,7 +406,6 @@ function App() {
               <select aria-label="Number format" value={selected?.format.style ?? 'general'} disabled={!selected} onChange={(event) => selected && updateFormat(selected.symbol, { style: event.target.value as 'general' | 'number' | 'percent' | 'scientific' })}>
                 <option value="general">General</option><option value="number">Number</option><option value="percent">Percent</option><option value="scientific">Scientific</option>
               </select>
-              <label className="unit-control">Unit <input aria-label="Unit" value={selected?.format.unit ?? ''} disabled={!selected} onChange={(event) => selected && updateFormat(selected.symbol, { unit: event.target.value || undefined })} /></label>
             </div>
             <div className="ribbon-row">
               <button aria-label="Increase decimal places" title="Increase decimal places" disabled={!selected} onClick={() => selected && updateFormat(selected.symbol, { decimals: Math.min(12, selected.format.decimals + 1) })}><span className="decimal-icon" aria-hidden="true">.0<ArrowLeft /></span></button>
@@ -277,6 +414,15 @@ function App() {
             </div>
           </div>
           <span className="ribbon-label">Number</span>
+        </div>
+        <div className="ribbon-group" role="group" aria-label="Variable">
+          <div className="ribbon-stack">
+            <div className="ribbon-row"><label className="variable-control">Symbol <input aria-label="Variable symbol in ribbon" value={symbolDraft && symbolDraft.id === selected?.id ? symbolDraft.value : selected?.symbol ?? ''} disabled={!selected} onChange={(event) => selected && setSymbolDraft({ id: selected.id, value: event.target.value })} onBlur={() => { commitSymbol() }} onKeyDown={(event) => {
+              if (event.key === 'Enter') { event.preventDefault(); commitSymbol() }
+              else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setSymbolDraft(undefined) }
+            }} /></label><label className="variable-control">Unit <input aria-label="Unit" value={selected?.format.unit ?? ''} disabled={!selected} onChange={(event) => selected && updateFormat(selected.symbol, { unit: event.target.value || undefined })} /></label></div>
+          </div>
+          <span className="ribbon-label">Variable</span>
         </div>
         <div className="ribbon-group" role="group" aria-label="Font">
           <div className="ribbon-stack">
@@ -315,6 +461,14 @@ function App() {
           </div>
           <span className="ribbon-label">Alignment</span>
         </div>
+        <div className="ribbon-group" role="group" aria-label="Table styles">
+          <div className="ribbon-content table-style-gallery">
+            {(Object.keys(TABLE_STYLES) as TableStyle[]).map((style) => <button key={style} className="table-style-button" aria-label={`Apply ${TABLE_STYLES[style].label} table style`} title={`Apply ${TABLE_STYLES[style].label} table style to selection`} onClick={() => {
+              try { formatTable(selectionRanges(gridSelection, gridSize.columns, gridSize.rows), style); setNotice('') } catch (error) { showError(error) }
+            }}><span className="table-style-preview" aria-hidden="true" style={{ '--table-header': TABLE_STYLES[style].header, '--table-band': TABLE_STYLES[style].band } as React.CSSProperties}><i /><i /><i /></span><span>{TABLE_STYLES[style].label}</span></button>)}
+          </div>
+          <span className="ribbon-label">Table styles</span>
+        </div>
         <div className="ribbon-group" role="group" aria-label="Math">
           <div className="ribbon-content">
             <button className="ribbon-primary" aria-label="+ Variable" onClick={handleAddVariable}><Plus aria-hidden="true" /> Variable</button>
@@ -332,13 +486,24 @@ function App() {
         <input className="name-box" aria-label="Name and symbol" value={name} readOnly={!selected} onChange={(event) => setNameDraft({ key: fieldKey, value: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitName() } }} />
         <span className="formula-icon">fx</span>
         <input ref={formulaInput} className={`formula-input${previewing ? ' formula-preview' : ''}`} aria-label="Formula or value" aria-autocomplete="list" aria-controls={formulaSuggestions.controls} aria-expanded={Boolean(formulaSuggestions.controls)} role="combobox" value={formula} spellCheck={false} placeholder={selected ? '' : 'Enter a name, assignment, or =formula'} onFocus={formulaSuggestions.onFocus} onSelect={formulaSuggestions.updateCaret} onBlur={formulaSuggestions.onBlur} onChange={(event) => { setFormulaDraft({ key: fieldKey, value: event.target.value }); formulaSuggestions.resetHighlight(); formulaSuggestions.updateCaret(event) }} onKeyDown={(event) => { if (!formulaSuggestions.onKeyDown(event) && event.key === 'Enter') { event.preventDefault(); commitFormula() } }} />
+        <span className="document-name" title={documentInfo.path ?? documentInfo.name}>{documentInfo.name}{dirty ? ' *' : ''}</span>
         {formulaSuggestions.menu && <div className="formula-suggestion-anchor">{formulaSuggestions.menu}</div>}
         {selected?.error && <span className="formula-error" role="alert" title={selected.error}><CircleAlert aria-hidden="true" /> {selected.error}</span>}
       </div>
-      <GridCanvas key={gridVersion} initialCell={selectedCell} blocks={blocks} plots={plots} cellFormats={cellFormats ?? {}} columnWidths={columnWidths ?? {}} dark={dark} selectedSymbol={selected?.symbol} onSelect={selectCell} onPickVariable={pickFormulaVariable} onSelectionChange={(selection, columns, rows) => { setGridSelection(selection); setGridSize({ columns, rows }) }} onEmptyDraft={setGridDraft} onEmptyCommit={createAtCell} onValueEdit={editValue} onResizeBlock={resizeBlock} onClearSelection={clearSelection} onMoveBlocks={moveBlocks} onColumnWidth={setColumnWidth} onRenameBlock={renameBlock} onPlotChange={updatePlot} onPlotRemove={removePlot} onPasteValues={handlePaste} onError={showError} />
-      {notice && <div className="status-message" role="status">{noticeIsError && <CircleAlert aria-hidden="true" />} {notice}<button onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
-    </main>
-  )
+      <GridCanvas key={gridVersion} initialCell={selectedCell} blocks={blocks} plots={plots} cellFormats={cellFormats ?? {}} columnWidths={columnWidths ?? {}} dark={dark} selectedSymbol={selected?.symbol} onSelect={selectCell} onPickVariable={pickFormulaVariable} onSelectionChange={(selection, columns, rows) => { setGridSelection(selection); setGridSize({ columns, rows }) }} onEmptyDraft={setGridDraft} commitEntryRef={commitEntryRef} onEmptyCommit={createAtCell} onValueEdit={editValue} onResizeBlock={resizeBlock} onClearSelection={clearSelection} onMoveBlocks={moveBlocks} onColumnWidth={setColumnWidth} onRenameBlock={renameBlock} onPlotChange={updatePlot} onPlotRemove={removePlot} onPasteValues={handlePaste} onError={showError} />
+    </main>}
+    {notice && <div className="status-message" role="status">{noticeIsError && <CircleAlert aria-hidden="true" />} {notice}<button onClick={() => setNotice('')} aria-label="Dismiss message">×</button></div>}
+    {pendingAction && <div className="document-dialog-backdrop"><div className="document-dialog" role="dialog" aria-modal="true" aria-labelledby="save-dialog-title" onKeyDown={(event) => { if (event.key === 'Escape') setPendingAction(undefined) }}><h2 id="save-dialog-title">Save changes to {documentInfo.name}?</h2><p>Your changes will be lost if you don’t save them.</p><div className="document-dialog-actions">
+      <button autoFocus onClick={() => setPendingAction(undefined)}>Cancel</button>
+      <button onClick={() => { const action = pendingAction.run; setPendingAction(undefined); void action() }}>Don’t Save</button>
+      <button className="primary" onClick={() => { void (async () => { if (await handleSave()) { const action = pendingAction.run; setPendingAction(undefined); await action() } })() }}>Save</button>
+    </div></div></div>}
+    {missingFile && <div className="document-dialog-backdrop"><div className="document-dialog" role="dialog" aria-modal="true" aria-labelledby="missing-dialog-title" onKeyDown={(event) => { if (event.key === 'Escape') setMissingFile(undefined) }}><h2 id="missing-dialog-title">File not found</h2><p>{missingFile.name} may have been moved or deleted. Locate it or remove it from the list.</p><div className="document-dialog-actions">
+      <button autoFocus onClick={() => setMissingFile(undefined)}>Cancel</button>
+      <button onClick={() => { updateRecent(recentRef.current.filter((item) => item.path !== missingFile.path)); setMissingFile(undefined) }}>Remove from List</button>
+      <button className="primary" onClick={() => { const old = missingFile; setMissingFile(undefined); void (async () => { try { const file = await loadWorkspace(); if (file) { updateRecent(recentRef.current.filter((item) => item.path !== old.path)); applyDocument(file); if (file.path && old.pinned) updateRecent(recentRef.current.map((item) => item.path === file.path ? { ...item, pinned: true } : item)) } } catch (error) { showError(error) } })() }}>Locate File</button>
+    </div></div></div>}
+  </>)
 }
 
 export default App
