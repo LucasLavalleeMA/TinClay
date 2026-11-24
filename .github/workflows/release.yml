@@ -1,0 +1,83 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri\tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = (Select-String -Path src-tauri\Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if ($env:GITHUB_REF_NAME -cne "v$version" -or $tauriVersion -cne $version -or $cargoVersion -cne $version) {
+            throw "Release tag, npm, Cargo, and Tauri versions must match."
+          }
+      - name: Install dependencies
+        run: npm ci
+      - name: Test and lint
+        shell: pwsh
+        run: |
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run lint
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare Rust target
+        shell: pwsh
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build Windows x64 executable and installer
+        shell: pwsh
+        run: |
+          npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis --ci -- --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = $env:GITHUB_REF_NAME
+          $output = 'src-tauri\target\x86_64-pc-windows-msvc\release'
+          $exe = Join-Path $output 'tinclay.exe'
+          $installers = @(Get-ChildItem (Join-Path $output 'bundle\nsis') -Filter '*_x64-setup.exe' -File)
+          if (!(Test-Path -LiteralPath $exe -PathType Leaf) -or $installers.Count -ne 1) {
+            throw 'Expected one Windows x64 executable and one NSIS installer.'
+          }
+          $stream = [System.IO.File]::OpenRead((Resolve-Path -LiteralPath $exe).Path)
+          try {
+            $reader = [System.IO.BinaryReader]::new($stream)
+            $stream.Position = 0x3c
+            $stream.Position = $reader.ReadInt32()
+            if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0x8664) {
+              throw 'The application is not a Windows x64 executable.'
+            }
+          } finally { $stream.Dispose() }
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --verify-tag --draft --title "TinClay $version" --notes "Windows x64 installer and standalone executable. Requires the Microsoft Edge WebView2 Runtime. These executables are not code-signed."
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create the draft release.' }
+          }
+          gh release upload $tag "$exe#TinClay-$version-windows-x64.exe" "$($installers[0].FullName)#TinClay-$version-windows-x64-setup.exe" --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not upload release assets.' }
+          gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the release.' }

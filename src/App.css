@@ -1,0 +1,165 @@
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 96px 32px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.ribbon {
+  color-scheme: dark;
+  --surface: #242424;
+  --surface-soft: #262626;
+  --surface-hover: #3a3a3a;
+  --text: #f1f1f1;
+  --text-muted: #c1c1c1;
+  --line: #505050;
+  --accent-soft: #514144;
+  --ribbon-icon: #91bdc7;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 8px 8px 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--line);
+}
+.ribbon-group { display: flex; flex: 0 0 auto; flex-direction: column; justify-content: flex-start; align-items: stretch; padding: 0 10px; border-right: 1px solid var(--line); }
+.ribbon-group:last-of-type { border-right: 0; }
+.ribbon-content { display: flex; align-items: stretch; height: 56px; gap: 2px; }
+.ribbon-stack { display: flex; flex-direction: column; justify-content: center; height: 56px; }
+.ribbon-row { display: flex; align-items: center; gap: 2px; height: 28px; }
+.ribbon-label { text-align: center; color: var(--text-muted); font-size: 11px; line-height: 19px; }
+.ribbon button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  padding: 0 5px;
+  font-size: 12px;
+}
+.ribbon button svg, .ribbon .color-control svg { width: 15px; height: 15px; stroke-width: 1.8; color: var(--ribbon-icon); }
+.ribbon button.ribbon-primary { height: 56px; min-width: 52px; flex-direction: column; gap: 3px; padding: 3px 6px; }
+.ribbon button.ribbon-primary svg { width: 24px; height: 24px; }
+.ribbon select, .ribbon input:not([type=checkbox]) {
+  height: 23px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 7px;
+  font-size: 12px;
+}
+.ribbon button:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line); }
+.ribbon button:active:not(:disabled), .ribbon button[aria-pressed='true'] { background: var(--accent-soft); }
+.ribbon :disabled { opacity: .5; }
+.align-control, .unit-control, .color-control { display: flex; align-items: center; gap: 4px; padding: 0 5px; color: var(--text); font-size: 12px; }
+.align-control input { accent-color: var(--accent); }
+.unit-control input { width: 55px; }
+.decimal-icon { display: inline-flex; align-items: center; color: var(--text); font-size: 11px; }
+.ribbon .decimal-icon svg { width: 12px; height: 12px; }
+.color-control { position: relative; justify-content: center; height: 24px; min-width: 27px; border-radius: 4px; cursor: pointer; }
+.color-control:hover, .color-control:focus-within { background: var(--surface-hover); }
+.ribbon .color-control input[type='color'] { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; opacity: 0; cursor: pointer; }
+.font-color-icon { height: 19px; border-bottom: 3px solid; color: var(--ribbon-icon); font-weight: 700; font-size: 15px; line-height: 16px; }
+.ribbon .color-control svg { box-sizing: content-box; border-bottom: 3px solid; padding-bottom: 1px; }
+.ribbon .border-color-control input[type='color'] { position: static; width: 25px; height: 23px; opacity: 1; padding: 2px; }
+
+.formula-bar {
+  color-scheme: dark;
+  --surface: #242424;
+  --surface-hover: #3a3a3a;
+  --text: #f1f1f1;
+  --line: #565656;
+  --accent-soft: #514144;
+  --error: #ffb6ad;
+  display: flex; min-width: 0; align-items: center; gap: 4px; padding: 3px 6px;
+  border-bottom: 1px solid #444; background: #171717; position: relative; z-index: 10;
+}
+.formula-bar input { height: 100%; border: 0; border-radius: 0; font-size: 13px; }
+.name-box { width: 180px; flex: 0 0 180px; padding: 0 9px; border: 1px solid var(--line) !important; border-radius: 3px !important; color: var(--text); background: var(--surface); }
+.formula-icon { width: 30px; text-align: center; color: #c1c1c1; font: italic 16px Georgia, serif; }
+.formula-input { min-width: 0; flex: 1; padding: 0 8px; border: 1px solid var(--line) !important; border-radius: 3px !important; font-family: Consolas, monospace; color: var(--text); background: var(--surface); }
+.formula-input::placeholder { color: #a8a8a8; opacity: 1; }
+.formula-input.formula-preview { color: #a8a8a8; }
+.formula-error { display: flex; align-items: center; gap: 4px; color: var(--error); font-size: 11px; padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 35%; }
+.formula-error svg, .status-message svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.formula-suggestion-anchor { position: absolute; top: 100%; left: 224px; z-index: 20; }
+.grid-suggestion-anchor { position: absolute; z-index: 12; }
+.formula-suggestions { display: flex; flex-direction: column; min-width: 150px; max-height: 220px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 3px 12px var(--shadow); }
+.formula-suggestions button { border: 0; padding: 5px 9px; text-align: left; background: var(--surface); color: var(--text); font: 12px Consolas, monospace; }
+.formula-suggestions button:hover, .formula-suggestions button[aria-selected='true'] { background: var(--accent-soft); }
+
+.grid-shell { width: 100%; height: 100%; position: relative; overflow: hidden; }
+.dragging-variable, .dragging-variable * { cursor: grabbing !important; }
+.grid-shell > div:first-child { height: 100%; }
+.grid-entry { position: absolute; z-index: 8; border: 2px solid var(--accent); border-radius: 0; outline: none; padding: 0 8px; background: var(--surface); color: var(--text); font: 13px "Segoe UI", sans-serif; }
+.drag-target { position: absolute; z-index: 4; border: 2px dashed var(--accent); background: #ac848122; pointer-events: none; }
+.resize-preview { position: absolute; z-index: 4; border: 2px dashed var(--accent); background: #ac848116; pointer-events: none; }
+.variable-resize { position: absolute; z-index: 4; width: 14px; height: 14px; padding: 0; border: 1px solid var(--accent); border-radius: 2px; background: var(--surface); box-shadow: 0 1px 3px var(--shadow); cursor: nwse-resize; touch-action: none; }
+.variable-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.header-editor {
+  position: absolute;
+  z-index: 9;
+  width: 230px;
+  padding: 9px;
+  display: grid;
+  gap: 6px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  box-shadow: 0 3px 12px var(--shadow);
+  font-size: 11px;
+}
+.header-editor label { display: grid; grid-template-columns: 48px 1fr; align-items: center; gap: 5px; }
+.header-editor input { min-width: 0; width: 100%; border: 1px solid var(--line); padding: 4px; background: var(--surface); color: var(--text); }
+.header-editor button { margin-right: 4px; }
+
+.floating-plot {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 3px 12px var(--shadow);
+  overflow: hidden;
+}
+.plot-header { min-height: 31px; display: flex; align-items: center; gap: 5px; padding: 3px 5px; background: var(--surface-soft); border-bottom: 1px solid var(--line); font-size: 11px; }
+.plot-drag { min-width: 45px; flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: move; touch-action: none; }
+.plot-header label { display: flex; gap: 3px; align-items: center; }
+.plot-header select { max-width: 82px; height: 23px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 11px; }
+.plot-header button { border: 0; background: transparent; color: var(--text-muted); font-size: 18px; line-height: 1; }
+.plot-settings-button svg { width: 16px; height: 16px; }
+.plot-body { flex: 1; width: 100%; min-height: 0; }
+.plot-message { flex: 1; display: grid; place-items: center; color: var(--text-muted); font-size: 12px; }
+.plot-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 55%, #c7948f 56%, #c7948f 62%, transparent 63%, transparent 72%, #c7948f 73%, #c7948f 79%, transparent 80%); }
+.plot-settings { position: absolute; z-index: 15; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: min(320px, 100%); background: var(--surface); color: var(--text); border-left: 1px solid var(--line); box-shadow: -3px 0 12px var(--shadow); font-size: 12px; }
+.plot-settings-left { left: 0; right: auto; border-left: 0; border-right: 1px solid var(--line); box-shadow: 3px 0 12px var(--shadow); }
+.plot-settings header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.plot-settings header button { border: 0; background: transparent; color: var(--text); font-size: 20px; }
+.plot-settings-content { overflow-y: auto; padding: 8px; }
+.plot-settings fieldset { display: grid; gap: 7px; min-width: 0; margin: 0 0 9px; border: 1px solid var(--line); }
+.plot-settings legend { color: var(--text-muted); font-weight: 600; }
+.plot-settings label { display: grid; gap: 3px; min-width: 0; }
+.plot-settings input:not([type=checkbox]), .plot-settings select { width: 100%; min-width: 0; height: 27px; padding: 2px 5px; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 3px; }
+.plot-settings input[type=color] { padding: 2px; }
+.plot-settings .plot-check { display: flex; align-items: center; gap: 6px; }
+.plot-settings .plot-check input { accent-color: var(--accent); }
+.plot-settings button { color: var(--text); cursor: pointer; }
+.plot-settings-content button { padding: 4px 6px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 3px; }
+.plot-axis, .plot-series { display: grid; gap: 6px; }
+.plot-series { padding: 7px; border: 1px solid var(--line); }
+.plot-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.plot-field-error { color: var(--error); }
+
+.status-message { position: fixed; z-index: 20; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 5px; max-width: min(460px, calc(100vw - 28px)); padding: 9px 10px; border-radius: 4px; background: #5c5152; color: white; box-shadow: 0 3px 12px var(--shadow); font-size: 12px; }
+.status-message button { border: 0; background: transparent; color: white; margin-left: 8px; font-size: 16px; }
